@@ -1,0 +1,92 @@
+%
+% TrafficLights.mcrl2
+%
+% A specification of a set of four traffic lights at a crossing.
+%
+% Copyright (c) 2019-2020 HS Emden-Leer
+% All Rights Reserved.
+%
+% @version 1.30 - 16 May 2020 - GJV - drops the need for a four-way synchronization, thereby becoming easier to translate into Go
+% @version 1.20 - 24 May 2019 - GJV - further optimatization, but no longer 100% equivalent with initial standard solution
+% @version 1.10 - 15 May 2019 - GJV - remove debug information and superfluous specs 
+% @version 1.00 - 17 Apr 2019 - GJV - initial version 
+%
+
+%
+% Definition of data types
+%
+
+sort
+	CardinalDirection = struct north | east | south | west;   % 4 directions
+	Axis = struct east_west | north_south; 	% 2 axes
+	
+map
+	axis: CardinalDirection -> Axis;
+
+eqn
+	axis(north) = north_south;
+	axis(east) = east_west; 
+	axis(south) = north_south;
+	axis(west) = east_west; 
+
+sort
+	Colour =  struct red | yellow | green;
+
+map
+	next : Colour -> Colour;
+
+eqn
+	next(red) = green;
+	next(green) = yellow;
+	next(yellow) = red;
+% -----------------------------------------------------------------------------------------------------------------------
+
+%
+% Definition of a TrafficLight
+%
+act
+	show : CardinalDirection # Colour;  % the given traffic light shows the given colour
+	seizeControl;						% get the control over the crossing
+	yieldControl;						% yield the control over the crossing
+	synchronize : Axis;					% coordinate switching of signals for one Axis
+	
+proc
+	TrafficLight(d : CardinalDirection) =
+		% north-south axis starts, east-west axis has to wait to take over control
+		((axis(d) == north_south) -> tau <> seizeControl) . TrafficLight(d, red);
+
+	TrafficLight(d : CardinalDirection, c : Colour) =
+		% show light, if it is red, handover control and get it back, otherwise synchronize, finally continue with next colour			
+		show(d, c) . synchronize(axis(d)) . ((c == red) -> yieldControl . synchronize(axis(d)) . seizeControl <> tau) . TrafficLight(d, next(c));
+
+% -----------------------------------------------------------------------------------------------------------------------
+
+%
+% Definition of a crossing with four traffic lights
+%
+act
+	synchronization : Axis;				% the traffic lights within the Axis synchronize
+	handover;							% signal that a change of control has happened
+
+proc 
+					
+	Crossing =
+		hide({
+			synchronization, handover
+		},
+		allow({
+			show, 
+			synchronization, handover
+		},
+		comm({
+			synchronize | synchronize -> synchronization,
+			yieldControl | seizeControl -> handover	% one yield together with one seize get synchronized
+		},
+			TrafficLight(north) || TrafficLight(east) || TrafficLight(south) || TrafficLight(west)
+		)))
+	;
+
+% -----------------------------------------------------------------------------------------------------------------------
+init
+	Crossing
+;
