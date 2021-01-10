@@ -9,7 +9,6 @@ package main
 
 import (
 	"log"
-	"sync"
 )
 
 type TrafficLightColours int
@@ -34,22 +33,20 @@ const (
 
 type AxisSwitch struct{ ActiveAxis DirectionAxis }
 type TrafficLight struct {
-	Direction   Direction
-	Colour      TrafficLightColours
-	Colours     chan TrafficLightColours
-	Axis        chan AxisSwitch
-	activeAxis  DirectionAxis
-	QuitChannel chan string
-	WaitGroup   *sync.WaitGroup
+	Direction         Direction
+	ActiveAxis        DirectionAxis
+	Colour            TrafficLightColours
+	AxisSwitchChannel chan AxisSwitch
+	ColoursChannel    chan TrafficLightColours
+	QuitChannel       chan string
 }
 
-func (t TrafficLight) NewTrafficLight(direction Direction, colour TrafficLightColours, colours chan TrafficLightColours, axis chan AxisSwitch, quitChannel chan string, waitGroup *sync.WaitGroup) TrafficLight {
+func (t TrafficLight) NewTrafficLight(direction Direction, colour TrafficLightColours, coloursChannel chan TrafficLightColours, axisSwitchChannel chan AxisSwitch, quitChannel chan string) TrafficLight {
 	t.Direction = direction
 	t.Colour = colour
-	t.Colours = colours
-	t.Axis = axis
+	t.AxisSwitchChannel = axisSwitchChannel
+	t.ColoursChannel = coloursChannel
 	t.QuitChannel = quitChannel
-	t.WaitGroup = waitGroup
 	return t
 }
 
@@ -59,71 +56,39 @@ loop:
 
 	for {
 
+		t.Show()
+
 		select {
 
-		case switchAxis := <-t.Axis:
+		case t.ColoursChannel <- t.Colour:
 
-			t.activeAxis = switchAxis.ActiveAxis
-
-			//Synchronization of one Axis check if the traffic light is on active axis
-
-			if switchAxis.ActiveAxis == axis(t.Direction) {
-
-				t.Show()
-				t.WaitGroup.Add(1)
-
-				//Sending Active Colour and wait for synchronisation of one axis
-
-				t.Colours <- t.Colour
-				t.WaitGroup.Wait()
-
-				//Green
-				t.switchLight()
-				//Yellow
-				t.switchLight()
-				//Red
-				t.switchLight()
-
-				//Sending Signal for Switching Crossing Control
-				if axis(t.Direction) == North_South {
-					t.Axis <- AxisSwitch{ActiveAxis: East_West}
-					log.Printf("Switch to EAST_WEST")
-				} else {
-					t.Axis <- AxisSwitch{ActiveAxis: North_South}
-					log.Printf("Switch to NORTH_SOUTH")
-				}
-
-			} else {
-				t.Axis <- switchAxis
-			}
-
-		case color := <-t.Colours:
-			{
-
-				t.Colour = color
-				t.Show()
-				t.WaitGroup.Done()
-
-			}
+		case colour := <-t.ColoursChannel:
+			t.Colour = colour
 
 		case <-t.QuitChannel:
-			break loop
+			goto loop
+
 		}
 
+		if t.Colour == Red {
+			if t.ActiveAxis == North_South {
+				t.ActiveAxis = East_West
+			} else {
+				t.ActiveAxis = North_South
+			}
+
+			select {
+			case sc := <-t.AxisSwitchChannel:
+				t.ActiveAxis = sc.ActiveAxis
+
+			case t.AxisSwitchChannel <- AxisSwitch{t.ActiveAxis}:
+			}
+		}
+
+		if axis(t.Direction) == t.ActiveAxis {
+			t.Colour = next(t.Colour)
+		}
 	}
-
-}
-
-/**
-* Function to switch the light of traffic lights
- */
-
-func (t *TrafficLight) switchLight() {
-	t.Colour = next(t.Colour)
-	t.Show()
-	t.WaitGroup.Add(1)
-	t.Colours <- t.Colour
-	t.WaitGroup.Wait()
 }
 
 /**
@@ -131,7 +96,7 @@ func (t *TrafficLight) switchLight() {
  */
 
 func (t TrafficLight) Show() {
-	log.Printf("Traffic Light Direction %s and Colour %s", t.Direction.String(), t.Colour.String())
+	log.Printf("Traffic Light Direction %s and Colour %s  ActiveAxis %s", t.Direction.String(), t.Colour.String(), t.ActiveAxis)
 }
 
 /**
@@ -174,4 +139,8 @@ func (c TrafficLightColours) String() string {
 
 func (d Direction) String() string {
 	return [...]string{"North", "East", "South", "West"}[d]
+}
+
+func (d DirectionAxis) String() string {
+	return [...]string{"EAST_WEST", "NORTH_SOUTH"}[d]
 }
